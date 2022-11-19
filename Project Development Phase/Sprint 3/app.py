@@ -1,143 +1,305 @@
-Aim: As a user, I can log into the application by entering email & password
-
-from distutils.log import debug
-from sendgridmail import sendmail
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import *
 import ibm_db
-import re
+from sendgridmail import sendmail
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
+conn = ibm_db.connect(os.getenv('DB_KEY'),'','')
 
 app = Flask(__name__)
-  
-app.secret_key = 'a'
 
-conn=ibm_db.connect(os.getenv('DB_KEY'),"","")
+app.app_context().push()
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config['SECRET_KEY'] = 'AJDJRJS24$($(#$$33--'
 
-@app.route('/')    
-@app.route('/login')
+@app.route("/signup")
+def signup():
+    return render_template("signup.html")
+
+@app.route("/")
 def login():
-    return render_template('login.html')
+    return render_template("login.html")
 
-
-@app.route('/loginpage',methods=['GET', 'POST'])
-def loginpage():
+# Login
+@app.route("/loginmethod", methods = ['GET'])
+def loginmethod():
     global userid
     msg = ''
 
-    if request.method == 'POST' :
-        username = request.form['username']
-        password = request.form['password']
-        sql = "SELECT * FROM donors WHERE username =? AND password=?"
+    if request.method == 'GET':
+        uname = request.args.get("uname")
+        psw = request.args.get("psw")
+
+        sql = "SELECT * FROM accounts WHERE username =? AND password=?"
         stmt = ibm_db.prepare(conn, sql)
-        ibm_db.bind_param(stmt,1,username)
-        ibm_db.bind_param(stmt,2,password)
+        ibm_db.bind_param(stmt, 1, uname)
+        ibm_db.bind_param(stmt, 2, psw)
         ibm_db.execute(stmt)
         account = ibm_db.fetch_assoc(stmt)
-        print (account)
+        print(account)
+
+        if uname == 'admin' and psw == 'admin':
+            return redirect(url_for('admin'))
+
         if account:
             session['loggedin'] = True
             session['id'] = account['USERNAME']
-            userid=  account['USERNAME']
+            userid = account['USERNAME']
             session['username'] = account['USERNAME']
-            msg = 'Logged in successfully !'
-            sendmail(account['EMAIL'],'Plasma donor App login','You are successfully logged in!')
-            return redirect(url_for('dash'))
+            return redirect(url_for("about"))
         else:
-            msg = 'Incorrect username / password !'
-    return render_template('login.html', msg = msg)
-   
-@app.route('/registration')
-def home():
-    return render_template('register.html')
+            msg = 'Incorrect Username and Password'
+            flash(msg)
+            return redirect(url_for("login"))
 
-@app.route('/register',methods=['GET', 'POST'])
-def register():
+@app.route("/admin")
+def admin():
+    send_sql = "SELECT * FROM donor"
+    prep_stmt = ibm_db.prepare(conn, send_sql)
+    ibm_db.execute(prep_stmt)
+    row = ibm_db.fetch_assoc(prep_stmt)
+
+    values = {}
+    ind = 0
+    while row != False:
+        values[ind] = row
+        ind += 1
+        row = ibm_db.fetch_assoc(prep_stmt)
+    print(values)
+
+    return render_template('admin.html',values=values)
+
+# Signup
+@app.route("/signupmethod", methods = ['POST'])
+def signupmethod():
     msg = ''
-    if request.method == 'POST' :
-        username = request.form['username']
+    if request.method == 'POST':
+        uname = request.form['uname']
         email = request.form['email']
-        password = request.form['password']
-        phone = request.form['phone']
-        city = request.form['city']
-        infect = request.form['infect']
-        blood = request.form['blood']
-        sql = "SELECT * FROM donors WHERE username =?"
+        name = request.form['name']
+        dob = request.form['dob']
+        psw = request.form['psw']
+        con_psw = request.form['con_psw']
+
+        sql = "SELECT * FROM accounts WHERE username =?"
         stmt = ibm_db.prepare(conn, sql)
-        ibm_db.bind_param(stmt,1,username)
+        ibm_db.bind_param(stmt, 1, uname)
         ibm_db.execute(stmt)
         account = ibm_db.fetch_assoc(stmt)
         print(account)
+
         if account:
             msg = 'Account already exists !'
-        elif not re.match(r'[^@]+@[^@]+\.[^@]+', email):
-            msg = 'Invalid email address !'
-        elif not re.match(r'[A-Za-z0-9]+', username):
-            msg = 'name must contain only characters and numbers !'
+            flash(msg)
+            return redirect(url_for("signup"))
+        elif psw != con_psw:
+            msg = "Password and Confirm Password do not match."
+            flash(msg)
+            return redirect(url_for("signup"))
         else:
-            insert_sql = "INSERT INTO  donors VALUES (?, ?, ?, ?, ?, ?, ?)"
+            insert_sql = "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)"
             prep_stmt = ibm_db.prepare(conn, insert_sql)
-            ibm_db.bind_param(prep_stmt, 1, username)
+            ibm_db.bind_param(prep_stmt, 1, name)
             ibm_db.bind_param(prep_stmt, 2, email)
-            ibm_db.bind_param(prep_stmt, 3, password)
-            ibm_db.bind_param(prep_stmt, 4, city)
-            ibm_db.bind_param(prep_stmt, 5, infect)
-            ibm_db.bind_param(prep_stmt, 6, blood)
-            ibm_db.bind_param(prep_stmt, 7, phone)
-
+            ibm_db.bind_param(prep_stmt, 3, dob)
+            ibm_db.bind_param(prep_stmt, 4, uname)
+            ibm_db.bind_param(prep_stmt, 5, psw)
             ibm_db.execute(prep_stmt)
-            msg = 'You have successfully registered !'
-            sendmail(email,'Plasma donor App Registration','You are successfully Registered {}!'.format(username))
+
+            insert_donor = "INSERT INTO donor(Name,Username,Email,DOB,Availability) VALUES (?, ?, ?, ?, ?)"
+            prep_stmt = ibm_db.prepare(conn, insert_donor)
+            ibm_db.bind_param(prep_stmt, 1, name)
+            ibm_db.bind_param(prep_stmt, 2, uname)
+            ibm_db.bind_param(prep_stmt, 3, email)
+            ibm_db.bind_param(prep_stmt, 4, dob)
+            ibm_db.bind_param(prep_stmt, 5, "Not Available")
+            ibm_db.execute(prep_stmt)
+
+            sendmail(email,'Plasma donor App login',name, 'You are successfully Registered!')
+
+            return redirect(url_for("login"))
 
     elif request.method == 'POST':
         msg = 'Please fill out the form !'
-    return render_template('register.html', msg = msg)
+        flash(msg)
+        return redirect(url_for("signup"))
 
-@app.route('/dashboard')
-def dash():
-    if session['loggedin'] == True:
-        sql = "SELECT COUNT(*), (SELECT COUNT(*) FROM DONORS WHERE blood= 'O Positive'), (SELECT COUNT(*) FROM DONORS WHERE blood='A Positive'), (SELECT COUNT(*) FROM DONORS WHERE blood='B Positive'), (SELECT COUNT(*) FROM DONORS WHERE blood='AB Positive'), (SELECT COUNT(*) FROM DONORS WHERE blood='O Negative'), (SELECT COUNT(*) FROM DONORS WHERE blood='A Negative'), (SELECT COUNT(*) FROM DONORS WHERE blood='B Negative'), (SELECT COUNT(*) FROM DONORS WHERE blood='AB Negative') FROM donors"
-        stmt = ibm_db.prepare(conn, sql)
-        ibm_db.execute(stmt)
-        account = ibm_db.fetch_assoc(stmt)
-        print(account)
-        return render_template('dashboard.html',b=account)
-    else:
-        msg = 'Please login!'
-        return render_template('login.html', msg = msg)
+@app.route("/home")
+def home():
+    return render_template("home.html")
 
 @app.route('/requester')
 def requester():
     if session['loggedin'] == True:
-        return render_template('request.html')
+        return render_template('home.html')
     else:
         msg = 'Please login!'
         return render_template('login.html', msg = msg)
 
 @app.route('/requested',methods=['POST'])
 def requested():
+    global value
     bloodgrp = request.form['bloodgrp']
-    address = request.form['address']
-    name=  request.form['name']
-    email=  request.form['email']
-    phone= request.form['phone']
-    insert_sql = "INSERT INTO  requested VALUES (?, ?, ?, ?, ?)"
-    prep_stmt = ibm_db.prepare(conn, insert_sql)
-    ibm_db.bind_param(prep_stmt, 1, bloodgrp)
-    ibm_db.bind_param(prep_stmt, 2, address)
-    ibm_db.bind_param(prep_stmt, 3, name)
-    ibm_db.bind_param(prep_stmt, 4, email)
-    ibm_db.bind_param(prep_stmt, 5, phone)
-    ibm_db.execute(prep_stmt)
-    sendmail(email,'Plasma donor App plasma request','Your request for plasma is recieved.')
-    return render_template('request.html', pred="Your request is sent to the concerned people.")
+    city = request.form['city']
 
+    send_sql = "SELECT * FROM donor where BLOODTYPE = ? and CITY = ? and USERNAME != ? and AVAILABILITY = ?"
+    prep_stmt = ibm_db.prepare(conn, send_sql)
+    ibm_db.bind_param(prep_stmt, 1, bloodgrp)
+    ibm_db.bind_param(prep_stmt, 2, city)
+    ibm_db.bind_param(prep_stmt, 3, session['username'])
+    ibm_db.bind_param(prep_stmt, 4, 'Available')
+    ibm_db.execute(prep_stmt)
+    row = ibm_db.fetch_assoc(prep_stmt)
+
+    value = {}
+    ind = 0
+    while row != False:
+        value[ind] = row
+        ind += 1
+        row = ibm_db.fetch_assoc(prep_stmt)
+    print(value)
+
+    return render_template("donorlist.html", value=value)
+
+    # return render_template('home.html', pred="Your request is sent to the concerned people.")
+
+@app.route('/about')
+def about():
+    print(session["username"], session['id'])
+
+    display_sql = "SELECT * FROM donor WHERE username = ?"
+    prep_stmt = ibm_db.prepare(conn, display_sql)
+    ibm_db.bind_param(prep_stmt, 1, session['id'])
+    ibm_db.execute(prep_stmt)
+    account = ibm_db.fetch_assoc(prep_stmt)
+    print(account)
+    donors = {}
+    for values in account:
+        if type(account[values]) == str:
+            donors[values] = account[values].strip()
+        else:
+            donors[values] = account[values]
+    print(donors)
+    return render_template("about.html", account = donors)
+
+@app.route('/sendEmail', methods = ["GET", "POST"])
+def sendEmail():
+    if request.method == 'POST':
+        if request.form['select'] == 'select':
+            email = request.form["Email"]
+            uname = request.form['Username']
+            curr_uname = session["username"]
+            name = request.form['Name']
+            select = "SELECT * from requests where Username = ? and Requestuname = ?"
+            stmt = ibm_db.prepare(conn, select)
+            ibm_db.bind_param(stmt, 1, uname)
+            ibm_db.bind_param(stmt, 2, curr_uname)
+            ibm_db.execute(stmt)
+            bool = ibm_db.fetch_assoc(stmt)
+
+            print("boolean"+str(bool))
+            if not bool:
+                request_sql = "INSERT INTO requests VALUES (?, ?)"
+                stmt = ibm_db.prepare(conn, request_sql)
+                ibm_db.bind_param(stmt, 1, uname)
+                ibm_db.bind_param(stmt, 2, curr_uname)
+                ibm_db.execute(stmt)
+                sendmail(email, 'Plasma donor App plasma request', name,'You have received a request for Plasma Donation from a donee.')
+            else:
+                print(bool)
+            print(email)
+            print(name)
+    return render_template("donorlist.html", value=value)
+
+@app.route('/requests')
+def requests():
+    req_sql = "SELECT * From requests where Username = ?"
+    stmt = ibm_db.prepare(conn, req_sql)
+    ibm_db.bind_param(stmt, 1, session['username'])
+    ibm_db.execute(stmt)
+    req = ibm_db.fetch_assoc(stmt)
+    print(req)
+    print(session['username'])
+    values = {}
+    ind = 0
+    while req != False:
+        get_data = "Select * from donor where Username = ?"
+        prep_stmt = ibm_db.prepare(conn, get_data)
+        ibm_db.bind_param(prep_stmt, 1, req['REQUESTUNAME'])
+        ibm_db.execute(prep_stmt)
+        req1 = ibm_db.fetch_assoc(prep_stmt)
+        values[ind] = req1
+        ind += 1
+        req = ibm_db.fetch_assoc(stmt)
+    print(values)
+
+    return render_template("requests.html", value=values)
+
+@app.route('/details', methods = ['POST'])
+def details():
+    if request.method == 'POST':
+        uname = request.form['uname']
+        email = request.form['email']
+        name = request.form['name']
+        dob = request.form['dob']
+        age = request.form['age']
+        phone = request.form['phone']
+        city = request.form['city']
+        state = request.form['state']
+        country = request.form['country']
+        bloodtype = request.form['bloodtype']
+        description = request.form['description']
+        avail = request.form['avail']
+
+        sql = "SELECT * FROM donor WHERE Username =?"
+        stmt = ibm_db.prepare(conn, sql)
+        ibm_db.bind_param(stmt, 1, uname)
+        ibm_db.execute(stmt)
+        account = ibm_db.fetch_assoc(stmt)
+
+        if account:
+            update_sql = "UPDATE donor set Name=?, Username=?, Email=?, DOB=?, Age=?, Phone=?, City=?, State=?, Country=?, BloodType=?,Description=?,Availability=? where Username = ?"
+            prep_stmt = ibm_db.prepare(conn, update_sql)
+            ibm_db.bind_param(prep_stmt, 1, name)
+            ibm_db.bind_param(prep_stmt, 2, uname)
+            ibm_db.bind_param(prep_stmt, 3, email)
+            ibm_db.bind_param(prep_stmt, 4, dob)
+            ibm_db.bind_param(prep_stmt, 5, age)
+            ibm_db.bind_param(prep_stmt, 6, phone)
+            ibm_db.bind_param(prep_stmt, 7, city)
+            ibm_db.bind_param(prep_stmt, 8, state)
+            ibm_db.bind_param(prep_stmt, 9, country)
+            ibm_db.bind_param(prep_stmt, 10, bloodtype)
+            ibm_db.bind_param(prep_stmt, 11, description)
+            ibm_db.bind_param(prep_stmt, 12, avail)
+            ibm_db.bind_param(prep_stmt, 13, uname)
+            ibm_db.execute(prep_stmt)
+            print("Update Success")
+            return redirect(url_for("about"))
+        else:
+            insert_sql = "INSERT INTO donor VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            prep_stmt = ibm_db.prepare(conn, insert_sql)
+            ibm_db.bind_param(prep_stmt, 1, name)
+            ibm_db.bind_param(prep_stmt, 2, uname)
+            ibm_db.bind_param(prep_stmt, 3, email)
+            ibm_db.bind_param(prep_stmt, 4, dob)
+            ibm_db.bind_param(prep_stmt, 5, age)
+            ibm_db.bind_param(prep_stmt, 6, phone)
+            ibm_db.bind_param(prep_stmt, 7, city)
+            ibm_db.bind_param(prep_stmt, 8, state)
+            ibm_db.bind_param(prep_stmt, 9, country)
+            ibm_db.bind_param(prep_stmt, 10, bloodtype)
+            ibm_db.bind_param(prep_stmt, 11, description)
+            ibm_db.bind_param(prep_stmt, 12, avail)
+            ibm_db.bind_param(prep_stmt, 13, False)
+
+            ibm_db.execute(prep_stmt)
+            print("Sucess")
+            return redirect(url_for("about"))
 
 @app.route('/logout')
-
 def logout():
    session.pop('loggedin', None)
    session.pop('id', None)
@@ -146,5 +308,3 @@ def logout():
 
 if __name__ == '__main__':
    app.run(host='0.0.0.0',debug='TRUE')
-
-        
